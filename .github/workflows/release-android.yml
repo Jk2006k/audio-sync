@@ -1,0 +1,63 @@
+name: Release (Android APK)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: true
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Setup Expo + EAS
+        uses: expo/expo-github-action@v8
+        with:
+          expo-version: latest
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Expo Doctor
+        run: npx expo-doctor
+
+      - name: EAS Build (Android APK)
+        run: |
+          eas build --platform android --profile production-apk --non-interactive --wait --json > eas-build.json
+          node -e "const fs=require('fs'); const j=JSON.parse(fs.readFileSync('eas-build.json','utf8')); const arr=Array.isArray(j)?j:(j.builds||j.data||[]); const id=(arr[0]&&arr[0].id)||(j.id); if(!id) { console.error('Unable to find build id in eas-build.json'); process.exit(1); } console.log('BUILD_ID='+id);" >> $GITHUB_ENV
+
+      - name: Download APK
+        run: eas build:download --platform android --id "$BUILD_ID" --output "audio-sync-${{ github.ref_name }}.apk"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            audio-sync-${{ github.ref_name }}.apk
